@@ -1,53 +1,82 @@
+import matplotlib.pyplot as plt
 import streamlit as st
 import requests
-import pandas as pd
-import datetime
 
-# פונקציה לקבלת מחיר הביטקוין הנוכחי
-def get_bitcoin_price():
-    try:
-        response = requests.get('https://api.coindesk.com/v1/bpi/currentprice/BTC.json')
-        data = response.json()
-        return float(data['bpi']['USD']['rate'].replace(',', ''))
-    except Exception as e:
-        st.error(f"שגיאה בקבלת המחיר: {e}")
-        return None
+# פונקציה לקבלת שער הביטקוין במטבעות שונים
+def get_bitcoin_price(currency):
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies={currency}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json().get("bitcoin", {}).get(currency, None)
+    return None
 
-# פונקציה לקבלת היסטוריית מחירים
-def get_bitcoin_history():
-    try:
-        response = requests.get('https://api.coindesk.com/v1/bpi/historical/close.json?for=yesterday')
-        data = response.json()
-        return pd.DataFrame(list(data['bpi'].items()), columns=['Date', 'Price'])
-    except Exception as e:
-        st.error(f"שגיאה בקבלת היסטוריית המחירים: {e}")
-        return None
+# פונקציה ליצירת גרף היסטוריית מחירים
+def get_price_history(currency):
+    url = f"https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency={currency}&days=30"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json().get("prices", [])
+        return [(point[0], point[1]) for point in data]
+    return []
 
-# פונקציה לחישוב ערך ההשקעה
-def calculate_investment_value(initial_investment, bitcoin_price_then, bitcoin_price_now):
-    bitcoin_owned = initial_investment / bitcoin_price_then
-    return bitcoin_owned * bitcoin_price_now
+# הגדרות עיצוב לעברית
+st.set_page_config(layout="wide")
+st.markdown(
+    """
+    <style>
+    body {
+        direction: rtl;
+        text-align: right;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-# כותרת
+# כותרת ראשית
 st.title("מחשבון השקעה בביטקוין")
 
-# קלט מהמשתמש
-st.header("הזן את נתוני ההשקעה:")
-initial_investment = st.number_input("כמה השקעת בביטקוין (בדולר)?", min_value=0.0, format="%.2f")
-bitcoin_price_then = st.number_input("מה היה ערך הביטקוין כשקנית (בדולר)?", min_value=0.0, format="%.2f")
+# בחירת מטבע
+currency = st.selectbox("בחר מטבע", ["usd", "eur", "ils"], format_func=lambda x: {"usd": "דולר", "eur": "יורו", "ils": "שקל"}[x])
 
-# קבלת נתוני היסטוריית מחירים
-st.sidebar.title("נתוני היסטוריית מחירים")
-history_data = get_bitcoin_history()
-if history_data is not None:
-    st.sidebar.line_chart(history_data.set_index('Date'))
+# קבלת שער הביטקוין
+current_price = get_bitcoin_price(currency)
+if current_price is None:
+    st.error("לא ניתן לקבל את שער הביטקוין כעת.")
+else:
+    st.success(f"שער הביטקוין הנוכחי ({currency.upper()}): {current_price:,.2f}")
 
-# חישוב והצגת הערך
-if st.button("חשב את הערך הנוכחי"):
-    bitcoin_price_now = get_bitcoin_price()
-    if bitcoin_price_now:
-        current_value = calculate_investment_value(initial_investment, bitcoin_price_then, bitcoin_price_now)
-        st.success(f"ההשקעה שלך שווה היום: ${current_value:,.2f}")
-        st.info(f"ערך הביטקוין הנוכחי: ${bitcoin_price_now:,.2f}")
+# מחשבון השקעה
+st.header("חישוב השקעה")
+initial_investment = st.number_input("סכום ההשקעה הראשונית (במטבע שנבחר)", min_value=0.0, step=1.0)
+bitcoin_price_then = st.number_input("שער הביטקוין בעת ההשקעה", min_value=0.0, step=1.0)
+
+if st.button("חשב"):
+    if bitcoin_price_then > 0:
+        bitcoins_owned = initial_investment / bitcoin_price_then
+        investment_value = bitcoins_owned * current_price
+        st.write(f"מספר הביטקוינים שרכשת: {bitcoins_owned:.6f}")
+        st.write(f"שווי ההשקעה כיום: {investment_value:,.2f} {currency.upper()}")
     else:
-        st.error("לא ניתן לשלוף את המחיר הנוכחי של ביטקוין.")
+        st.error("אנא הזן שער ביטקוין תקין בעת ההשקעה.")
+
+# גרף היסטוריית מחירים
+st.header("גרף היסטוריית מחירים (30 ימים אחרונים)")
+price_history = get_price_history(currency)
+
+if price_history:
+    timestamps = [point[0] for point in price_history]
+    values = [point[1] for point in price_history]
+    
+    # יצירת גרף עם Matplotlib
+    plt.figure(figsize=(10, 5))
+    plt.plot(timestamps, values, label="מחיר הביטקוין")
+    plt.title("גרף היסטוריית מחירים של ביטקוין (30 ימים)")
+    plt.xlabel("תאריך")
+    plt.ylabel(f"מחיר ({currency.upper()})")
+    plt.legend()
+    plt.grid(True)
+    
+    st.pyplot(plt.gcf())  # הצגת הגרף ב-Streamlit
+else:
+    st.error("לא ניתן לטעון את נתוני היסטוריית המחירים.")
